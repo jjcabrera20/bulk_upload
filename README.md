@@ -1,46 +1,77 @@
-# KoboToolbox Data Upload Script
+# KoboToolbox Bulk Upload Script
 
-This script uploads data from an Excel file to a KoboToolbox server.
+Uploads data from an Excel file to any KoboToolbox server.  
+Uses **API v2** to fetch form metadata and **API v1** to submit records.
 
 ## Requirements
 
-*   Python 3.6+
-*   `pandas` library
-*   `requests` library
+- Python 3.8+
+- `pandas`, `requests`, `python-dotenv`
 
-## Installation
+```bash
+pip install pandas requests python-dotenv
+```
 
-1.  Install the required libraries:
+## Configuration
 
-    ```bash
-    pip install pandas requests
-    ```
+All parameters live in a `.env` file at the project root:
+
+| Variable | Description |
+|---|---|
+| `API_KEY` | Your KoboToolbox API token (Account → Security → API key) |
+| `KOBO_URL` | Base URL of the KoboToolbox server |
+| `ASSET_UID` | UID of the target form (alphanumeric, found in the form URL) |
+| `EXCEL_FILE` | Path to the Excel file to upload (default: `data.xlsx`) |
+
+The script automatically derives the submission server URL from `KOBO_URL`
+(replaces `kf.` with `kc.` for public KoboToolbox; no change for self-hosted servers).
+
+### Public KoboToolbox
+
+```
+API_KEY=your_api_token_here
+KOBO_URL=https://kf.kobotoolbox.org
+ASSET_UID=aXXXXXXXXXXXXXXXXXXXX
+EXCEL_FILE=data.xlsx
+```
+
+### EU server
+
+```
+KOBO_URL=https://eu.kobotoolbox.org
+```
+
+### Self-hosted / custom server
+
+```
+KOBO_URL=https://your-kobo-server.org
+```
 
 ## Usage
 
-1.  Create an Excel file named `data.xlsx` with the following column headers:
+1. Fill in `.env` with your credentials and form details.
+2. Prepare an Excel file whose column headers match either the **field names** or **field labels** of the KoboToolbox form.
+3. Run:
 
-    *   `AMIE`
-    *   `Nombre Institución`
-    *   `Zona`
-    *   `Admin1`
-    *   `Cod Admin1`
-    *   `Admin2`
-    *   `Cod Admin2`
+```bash
+python upload_generic.py
+```
 
-2.  Update the `kobo_upload.py` script with your KoboToolbox credentials:
+The script will:
+1. Fetch the form structure via API v2.
+2. Display available form fields.
+3. Auto-map Excel columns to form fields (by name, then by label).
+4. Ask for confirmation before uploading.
+5. Submit each row as JSON via API v1 and print a success/failure summary.
 
-    *   `KOBOTOOLBOX_URL`
-    *   `FORM_ID`
-    *   `USERNAME`
-    *   `PASSWORD`
+## Column Mapping
 
-3.  Run the script:
+- Exact match on field **name** is tried first.
+- If no name match, the column is matched against the field **label**.
+- Unmapped columns are listed as warnings and skipped.
 
-    ```bash
-    python kobo_upload.py
-    ```
+## API Reference
 
-## Error Handling
-
-The script includes basic error handling and logging. If any errors occur during the data upload process, they will be printed to the console.
+- [KoboToolbox API v2](https://support.kobotoolbox.org/api.html)
+- [API v1 → v2 Migration Guide](https://support.kobotoolbox.org/migrating_api.html)
+- [Interactive API v2 docs](https://kf.kobotoolbox.org/api/v2/docs/)
