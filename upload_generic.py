@@ -1,3 +1,6 @@
+import copy
+import xml.etree.ElementTree as ET
+
 import pandas as pd
 import requests
 import dotenv
@@ -42,6 +45,9 @@ def get_form_structure():
         if item.get('type', '') not in skip_types and item.get('name')
     ]
 
+    owner_url = data.get('owner', '') or ''
+    username = owner_url.rstrip('/').rsplit('/', 1)[-1]
+
     print(f"\n✓ Form loaded: {data.get('name', 'Unknown')}")
     print(f"  UID: {data.get('uid')}  |  Version: {data.get('version_id')}  |  Fields: {len(fields)}")
 
@@ -50,7 +56,33 @@ def get_form_structure():
         'id_string': data.get('uid'),
         'title': data.get('name'),
         'fields': fields,
+        'username': username,
     }
+
+
+def fetch_instance_template(asset_uid):
+    """Fetch the XForm XML definition and extract an empty default-instance
+    element tree, stripped of its XForms namespace, to use as a submission
+    template (preserves the form's group nesting)."""
+    url = f"{KOBO_URL}/api/v2/assets/{asset_uid}.xml"
+    headers = {"Authorization": f"Token {API_TOKEN}"}
+
+    response = requests.get(url, headers=headers)
+    if response.status_code != 200:
+        print(f"Error fetching form XML: {response.status_code}\n{response.text}")
+        return None
+
+    root = ET.fromstring(response.content)
+    for el in root.iter():
+        if '}' in el.tag:
+            el.tag = el.tag.split('}', 1)[1]
+
+    instance = root.find('.//model/instance')
+    if instance is None or len(instance) == 0:
+        print("Error: could not find default instance in form XML.")
+        return None
+
+    return instance[0]
 
 
 def read_excel_data(file_path):
@@ -108,20 +140,26 @@ def map_columns_to_fields(df_columns, form_fields):
     return mapping
 
 
-def submit_row(form_id_string, row_data: dict) -> tuple:
-    """Submit a record via KoboToolbox API v1 (JSON)."""
-    url = f"{KOBO_KC_URL}/api/v1/submissions"
+def submit_row(username, instance_template, row_data: dict) -> tuple:
+    """Submit a record via the OpenRosa submission endpoint (XML)."""
+    record = copy.deepcopy(instance_template)
+
+    for field_name, value in row_data.items():
+        el = next(record.iter(field_name), None)
+        if el is not None:
+            el.text = value
+
+    instance_id_el = next(record.iter('instanceID'), None)
+    if instance_id_el is not None:
+        instance_id_el.text = f"uuid:{uuid.uuid4()}"
+
+    xml_body = ET.tostring(record, encoding='utf-8', xml_declaration=True)
+
+    url = f"{KOBO_KC_URL}/{username}/submission"
     headers = {"Authorization": f"Token {API_TOKEN}"}
+    files = {"xml_submission_file": ("submission.xml", xml_body, "text/xml")}
 
-    payload = {
-        "id": form_id_string,
-        "submission": {
-            "meta": {"instanceID": f"uuid:{uuid.uuid4()}"},
-            **row_data,
-        }
-    }
-
-    response = requests.post(url, headers=headers, json=payload)
+    response = requests.post(url, headers=headers, files=files)
     ok = response.status_code in (200, 201, 202)
     return ok, "" if ok else f"{response.status_code}: {response.text}"
 
@@ -135,6 +173,12 @@ def main():
     form = get_form_structure()
     if not form:
         print("\n✗ Failed to load form. Check API_KEY, KOBO_URL, and ASSET_UID in .env.")
+        return
+
+    print("\nFetching submission XML template...")
+    instance_template = fetch_instance_template(ASSET_UID)
+    if instance_template is None:
+        print("\n✗ Failed to load submission template.")
         return
 
     print("\nForm fields:")
@@ -170,7 +214,7 @@ def main():
         }
 
         print(f"Row {index + 1}/{len(df)}...", end=" ")
-        ok, msg = submit_row(form['id_string'], row_data)
+        ok, msg = submit_row(form['username'], instance_template, row_data)
 
         if ok:
             success_count += 1
